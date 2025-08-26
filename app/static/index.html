@@ -1,0 +1,55 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Support Bot – Local Test</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 780px; margin: 30px auto; }
+  #log { border:1px solid #ddd; padding:10px; height:420px; overflow:auto; }
+  #log p { white-space: pre-line; margin: 6px 0; }
+  .me { color:#222; }
+  .bot { color:#0a6; }
+  input, button { padding:10px; }
+</style>
+<h2>Support Bot – Local Test</h2>
+<div id="log"></div>
+<div style="margin-top:10px;">
+  <input id="msg" placeholder="Type message..." style="width:80%;" />
+  <button onclick="send()">Send</button>
+</div>
+<script>
+  const sid = 'demo-' + Math.random().toString(36).slice(2);
+  const log = document.getElementById('log');
+  function add(who, text){
+    const p = document.createElement('p');
+    p.className = who;
+    p.textContent = (who==='me'?'You: ':'Bot: ') + text;
+    log.appendChild(p); log.scrollTop = log.scrollHeight;
+  }
+  async function send(){
+    const mEl = document.getElementById('msg');
+    const m = mEl.value.trim();
+    if(!m) return;
+    add('me', m);
+    mEl.value = '';
+    try {
+      const res = await fetch('/webhook/tawk', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({session_id: sid, message: m})
+      });
+      const text = await res.text();
+      let payload = null;
+      try { payload = JSON.parse(text); } catch(e) {}
+      if(!res.ok){
+        const msg = (payload && (payload.detail || payload.message)) || text || `HTTP ${res.status}`;
+        add('bot', `Error ${res.status}: ${msg}`);
+        return;
+      }
+      const reply = (payload && payload.reply) ? payload.reply : text;
+      add('bot', reply ?? '(no reply)');
+    } catch (e) {
+      add('bot', `Network error: ${e && e.message ? e.message : e}`);
+    }
+  }
+  add('bot','Hi! I can help with device rentals. What do you need?');
+</script>
+

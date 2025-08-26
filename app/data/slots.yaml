@@ -1,0 +1,78 @@
+intent: device_rental
+order:
+  - platform
+  - device_model
+  - quantity
+  - rental_dates
+  - location
+  - vpn_ok
+  - need_os_version   # NEW: pytamy, czy wymagana konkretna wersja
+  - os_version        # WARUNKOWY: tylko jeśli need_os_version=Yes
+  - accessories
+  - contact_email
+
+definitions:
+  platform:
+    type: enum
+    values: ["Android", "iOS"]
+    required: true
+    prompt: "Which platform do you need: Android or iOS?"
+    error: "Please choose Android or iOS."
+
+  device_model:
+    type: string
+    required: true
+    prompt: "Which device model do you prefer? You can say 'I don't know' and I can suggest options."
+    error: "Please provide a model (or say 'I don't know')."
+
+  quantity:
+    type: int
+    required: true
+    prompt: "How many devices do you need?"
+    error: "Please enter a valid number (e.g., 3)."
+
+  rental_dates:
+    type: daterange
+    required: true
+    prompt: "What rental dates do you need? Format: YYYY-MM-DD → YYYY-MM-DD."
+    error: "Please use format YYYY-MM-DD → YYYY-MM-DD."
+
+  location:
+    type: enum
+    values: ["Poland", "Germany", "Ghana", "Other"]
+    required: true
+    prompt: "Where should the devices be located? Choose: Poland / Germany / Ghana. If different, say 'Other'."
+    error: "Please answer: Poland / Germany / Ghana or 'Other'."
+
+  vpn_ok:
+    type: yesno
+    required: true
+    prompt: "Your location isn't in our supported regions. Would a VPN endpoint in Poland/Germany/Ghana be acceptable? (Yes/No)"
+    error: "Please answer Yes or No."
+
+  need_os_version:
+    type: yesno
+    required: true
+    prompt: "Do you require a specific OS version? (Yes/No)"
+    error: "Please answer Yes or No."
+
+  os_version:
+    type: string
+    required: true     # UWAGA: ten slot jest wymagany TYLKO, gdy need_os_version=Yes (FSM to obsłuży)
+    prompt: "Which OS version do you need? (e.g., iOS 17 or Android 14)"
+    error: "Please specify OS version like 'iOS 17' or 'Android 14'."
+
+  accessories:
+    type: multienum
+    values: ["SIM", "Tripod", "Charger", "Case"]
+    required: false
+    prompt: "Any accessories? (SIM, Tripod, Charger, Case)"
+
+  contact_email:
+    type: email
+    required: true
+    prompt: "What's your contact email?"
+    error: "This doesn't look like a valid email."
+
+summary_template: |
+  (not used)
