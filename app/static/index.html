@@ -1,35 +1,47 @@
 <!doctype html>
+<html lang="en">
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Support Bot – Local Test</title>
 <style>
-  body { font-family: Arial, sans-serif; max-width: 780px; margin: 30px auto; }
-  #log { border:1px solid #ddd; padding:10px; height:420px; overflow:auto; }
-  #log p { white-space: pre-line; margin: 6px 0; }
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
+  #log { border:1px solid #ccc; padding:12px; height:420px; overflow:auto; white-space:pre-line; background:#fafafa; }
   .me { color:#222; }
   .bot { color:#0a6; }
-  input, button { padding:10px; }
+  .err { color:#b00020; }
+  #bar { margin-top:10px; display:flex; gap:8px; }
+  #msg { flex:1; padding:10px; }
+  button { padding:10px 14px; cursor:pointer; }
+  small { color:#666; }
 </style>
-<h2>Support Bot – Local Test</h2>
-<div id="log"></div>
-<div style="margin-top:10px;">
-  <input id="msg" placeholder="Type message..." style="width:80%;" />
-  <button onclick="send()">Send</button>
-</div>
+<body>
+  <h2>Support Bot – Local Test</h2>
+  <div id="log"></div>
+  <div id="bar">
+    <input id="msg" placeholder="Type message... (type 'reset' to restart)" autocomplete="off" />
+    <button id="send">Send</button>
+  </div>
+  <small>Tips: say "I don't know" for model; you'll be asked about same model, OS requirement, etc.</small>
 <script>
   const sid = 'demo-' + Math.random().toString(36).slice(2);
   const log = document.getElementById('log');
-  function add(who, text){
-    const p = document.createElement('p');
-    p.className = who;
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('send');
+
+  function add(who, text, cls='') {
+    const p = document.createElement('div');
+    p.className = who + (cls?(' '+cls):'');
     p.textContent = (who==='me'?'You: ':'Bot: ') + text;
     log.appendChild(p); log.scrollTop = log.scrollHeight;
   }
-  async function send(){
-    const mEl = document.getElementById('msg');
-    const m = mEl.value.trim();
+
+  async function send() {
+    const m = msg.value.trim();
     if(!m) return;
     add('me', m);
-    mEl.value = '';
+    msg.value = '';
+
     try {
       const res = await fetch('/webhook/tawk', {
         method:'POST',
@@ -37,19 +49,26 @@
         body: JSON.stringify({session_id: sid, message: m})
       });
       const text = await res.text();
-      let payload = null;
-      try { payload = JSON.parse(text); } catch(e) {}
+      let payload=null; try { payload = JSON.parse(text); } catch {}
       if(!res.ok){
-        const msg = (payload && (payload.detail || payload.message)) || text || `HTTP ${res.status}`;
-        add('bot', `Error ${res.status}: ${msg}`);
+        const err = (payload && (payload.detail || payload.message)) || text || `HTTP ${res.status}`;
+        add('bot', `Error ${res.status}: ${err}`, 'err');
         return;
       }
       const reply = (payload && payload.reply) ? payload.reply : text;
       add('bot', reply ?? '(no reply)');
-    } catch (e) {
-      add('bot', `Network error: ${e && e.message ? e.message : e}`);
+    } catch(e) {
+      add('bot', 'Network error: '+ (e && e.message ? e.message : e), 'err');
     }
   }
-  add('bot','Hi! I can help with device rentals. What do you need?');
-</script>
+  btn.addEventListener('click', send);
+  msg.addEventListener('keydown', (e)=>{ if(e.key==='Enter') send(); });
 
+  add('bot',
+`Hi! I can help with device rentals.
+- type 'reset' anytime to restart the session
+- say 'I don't know' if you're unsure about the model
+- you can add a note at the end (e.g., 'need rugged cases')`);
+</script>
+</body>
+</html>

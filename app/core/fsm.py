@@ -64,13 +64,13 @@ class BotEngine:
         s = self._get(session_id)
         raw = (text or "").strip()
 
-        # reset/ restart
+        # reset
         if RESET_RE.match(raw):
             order = self.slots.order
             self.sessions[session_id] = SessionState(current_slot=order[0], last_prompted=order[0])
-            return "Session reset. Which platform do you need: Android or iOS?"
+            return "Session reset. Which platform do you need: Android or iOS? (type 'reset' anytime)"
 
-        # faza confirm
+        # confirm
         if s.current_slot == "confirm":
             self._bump(s)
             answer = raw.lower()
@@ -86,7 +86,6 @@ class BotEngine:
         extracted = parse_message(raw, self.slots)
         for k, v in extracted.items():
             if v is None: continue
-            # nie nadpisuj poprawnych (poza accessories, które łączymy)
             if k in s.data and validate_slot(k, s.data[k], self.slots):
                 if k == "accessories" and isinstance(v, list):
                     prev = s.data.get(k) or []
@@ -94,7 +93,7 @@ class BotEngine:
                 continue
             s.data[k] = v
 
-        # ilość – tryb luźny, gdy pytamy o quantity
+        # ilość – tryb luźny
         if s.current_slot == "quantity":
             if ("quantity" not in s.data) or (not validate_slot("quantity", s.data.get("quantity"), self.slots)):
                 q = try_coerce_quantity_loose(raw)
@@ -119,7 +118,14 @@ class BotEngine:
                     if YES_RE.match(raw): s.data["vpn_ok"]="Yes"; present=True; valid=True
                     elif NO_RE.match(raw): s.data["vpn_ok"]="No"; present=True; valid=True
 
-            # need_os_version — zawsze pytamy (gate)
+            # need_same_model — Yes/No
+            if slot == "need_same_model":
+                required = True
+                if s.last_prompted == "need_same_model" and not present:
+                    if YES_RE.match(raw): s.data["need_same_model"]="Yes"; present=True; valid=True
+                    elif NO_RE.match(raw): s.data["need_same_model"]="No";  present=True; valid=True
+
+            # need_os_version — gate
             if slot == "need_os_version":
                 required = True
                 if s.last_prompted == "need_os_version" and not present:
@@ -132,13 +138,11 @@ class BotEngine:
                 if gate == "yes":
                     required = True
                     if s.last_prompted == "os_version":
-                        # idk/any/no => rezygnujemy
                         if UNK_RE.search(raw) or NO_RE.match(raw):
                             s.data["need_os_version"] = "No"
                             s.data["os_version"] = ""
                             present = True; valid = True; required = False
                         else:
-                            # sama liczba => dołącz platformę
                             m = BARE_INT_RE.match(raw)
                             if m:
                                 plat = (s.data.get("platform") or "").strip()
@@ -162,7 +166,7 @@ class BotEngine:
                 s.last_prompted = slot
                 self._bump(s)
 
-                # dynamiczne prompty i obsługa modelu
+                # dynamiczne prompty
                 if slot == "device_model" and "device_model" in extracted and not validate_slot("device_model", s.data.get("device_model"), self.slots):
                     s.errors_in_row += 1
                     platform = (s.data.get("platform") or "").lower()
@@ -186,6 +190,8 @@ class BotEngine:
 
                 if slot == "vpn_ok":
                     return "Your location isn't in our supported regions. Would a VPN endpoint in Poland/Germany/Ghana be acceptable? (Yes/No)"
+                if slot == "need_same_model":
+                    return "Should all devices be the same model? (Yes/No)"
                 if slot == "need_os_version":
                     return "Do you require a specific OS version? (Yes/No)"
                 if slot == "os_version":
@@ -193,7 +199,7 @@ class BotEngine:
                     return "Which OS version do you need? (e.g., iOS 17)" if plat=="ios" else "Which OS version do you need? (e.g., Android 14)"
                 return self.slots.prompt_for(slot)
 
-        # zebrane wszystkie — summary + rekomendacje
+        # wszystkie sloty gotowe — summary + rekomendacje
         s.current_slot = "confirm"
         self._bump(s)
         rec = suggest_devices(s.data)

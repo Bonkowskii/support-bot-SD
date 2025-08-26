@@ -3,12 +3,14 @@ order:
   - platform
   - device_model
   - quantity
+  - need_same_model
   - rental_dates
   - location
   - vpn_ok
-  - need_os_version   # NEW: pytamy, czy wymagana konkretna wersja
-  - os_version        # WARUNKOWY: tylko jeśli need_os_version=Yes
+  - need_os_version
+  - os_version
   - accessories
+  - note
   - contact_email
 
 definitions:
@@ -16,7 +18,7 @@ definitions:
     type: enum
     values: ["Android", "iOS"]
     required: true
-    prompt: "Which platform do you need: Android or iOS?"
+    prompt: "Which platform do you need: Android or iOS? (type 'reset' anytime to restart)"
     error: "Please choose Android or iOS."
 
   device_model:
@@ -28,8 +30,14 @@ definitions:
   quantity:
     type: int
     required: true
-    prompt: "How many devices do you need?"
+    prompt: "How many devices do you need? (e.g., 'I need 3 devices')"
     error: "Please enter a valid number (e.g., 3)."
+
+  need_same_model:
+    type: yesno
+    required: true
+    prompt: "Should all devices be the same model? (Yes/No)"
+    error: "Please answer Yes or No."
 
   rental_dates:
     type: daterange
@@ -58,7 +66,7 @@ definitions:
 
   os_version:
     type: string
-    required: true     # UWAGA: ten slot jest wymagany TYLKO, gdy need_os_version=Yes (FSM to obsłuży)
+    required: true
     prompt: "Which OS version do you need? (e.g., iOS 17 or Android 14)"
     error: "Please specify OS version like 'iOS 17' or 'Android 14'."
 
@@ -67,6 +75,11 @@ definitions:
     values: ["SIM", "Tripod", "Charger", "Case"]
     required: false
     prompt: "Any accessories? (SIM, Tripod, Charger, Case)"
+
+  note:
+    type: string
+    required: false
+    prompt: "Any additional notes or requirements? (optional)"
 
   contact_email:
     type: email

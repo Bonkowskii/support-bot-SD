@@ -1,109 +1,133 @@
 import os
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List
 
-ENABLED = os.getenv("RECOMMENDER_ENABLED", "false").lower() == "true"
-API_URL = os.getenv("DEVICES_API_URL", "").strip()
-API_KEY = os.getenv("DEVICES_API_KEY", "").strip()
-LIMIT = int(os.getenv("SUGGESTION_LIMIT", "3"))
+from .sd_api import fetch_devices_raw
 
+def _enabled() -> bool:
+    return (os.getenv("RECOMMENDER_ENABLED", "false") or "").lower() == "true"
 
-# --- MOCKOWANA BAZA URZĄDZEŃ (offline) ---
-# Możesz dowolnie rozszerzyć/podmienić. Każdy rekord:
-# name: nazwa modelu
-# platform: "Android" | "iOS"
-# versions: lista wspieranych wersji OS (dokładne ciągi, typu "iOS 17" / "Android 14")
-# available: True jeśli mamy fizycznie na stanie (tu i teraz)
-INVENTORY: List[Dict[str, Any]] = [
-    {"name": "iPhone 15",      "platform": "iOS",     "versions": ["iOS 17"],     "available": True},
-    {"name": "iPhone 14",      "platform": "iOS",     "versions": ["iOS 17"],     "available": True},
-    {"name": "iPhone 13",      "platform": "iOS",     "versions": ["iOS 17"],     "available": False},
+def _limit() -> int:
+    try:
+        return int(os.getenv("SUGGESTION_LIMIT", "3"))
+    except Exception:
+        return 3
 
-    {"name": "Samsung Galaxy S23", "platform": "Android", "versions": ["Android 14"], "available": True},
-    {"name": "Google Pixel 7",     "platform": "Android", "versions": ["Android 14"], "available": True},
-    {"name": "OnePlus 11",         "platform": "Android", "versions": ["Android 14"], "available": False},
-]
+# ---------- Normalizacja pól z Twojego API ----------
 
+def _norm_platform(v: str) -> str:
+    v = (v or "").strip().lower()
+    if v.startswith("ios") or v == "apple":
+        return "iOS"
+    if v.startswith("android"):
+        return "Android"
+    return ""
 
-def _parse_os_version(os_ver: str) -> Tuple[str, str]:
+def _clean_version(ver_raw: Any, platform: str) -> str:
     """
-    Zamienia "iOS 17" -> ("ios","17"), "Android 14" -> ("android","14").
-    Zwraca ("","") jeśli brak.
+    "18.6.1\nProductVersion" -> "iOS 18.6.1" (gdy platform='iOS')
+    "7.0" + Android -> "Android 7.0"
     """
-    if not os_ver:
-        return "", ""
-    parts = os_ver.strip().split()
-    if len(parts) < 2:
-        return parts[0].lower(), ""
-    return parts[0].lower(), parts[1]
+    s = str(ver_raw or "").strip()
+    if not s:
+        return ""
+    # utnij wszystko po pierwszej linii (często "\nProductVersion")
+    s = s.splitlines()[0].strip()
+    if platform:
+        return f"{platform} {s}"
+    return s
 
-
-def fetch_inventory(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _group_name(g: Any) -> str:
     """
-    Warstwa dostępu do danych:
-    - Na DEV zwraca lokalną listę INVENTORY.
-    - Docelowo podmień na wywołanie API (GET/POST) i zwróć listę słowników o tej samej strukturze.
+    group może być stringiem ("CLEAN") albo obiektem {"name": "..."}.
     """
-    # Przykład jak wyglądałoby wołanie API:
-    # if ENABLED and API_URL:
-    #     import requests
-    #     headers = {"Authorization": f"Bearer {API_KEY}"}
-    #     resp = requests.get(API_URL, headers=headers, timeout=6)
-    #     resp.raise_for_status()
-    #     return resp.json()  # upewnij się, że struktura pasuje (name/platform/versions/available)
-    return INVENTORY
+    if isinstance(g, dict):
+        return str(g.get("name") or "").strip()
+    return str(g or "").strip()
 
+def _is_clean_group(name: str) -> bool:
+    """
+    Tylko DOKŁADNIE 'CLEAN' (case-insensitive).
+    Nie łapiemy 'TOCLEAN', 'CLEANING', itp.
+    """
+    return name.upper() == "CLEAN"
+
+def _status_int(v: Any) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return 0
+
+def _normalize_from_sd(d: Dict[str, Any]) -> Dict[str, Any]:
+    name = d.get("model") or d.get("marketName") or d.get("name") or "Device"
+    platform = _norm_platform(d.get("platform") or "")
+    ver = _clean_version(d.get("version"), platform)
+    versions = [ver] if ver else []
+
+    status = _status_int(d.get("status"))
+    group = _group_name(d.get("group"))
+    ready = bool(d.get("ready"))
+    present = bool(d.get("present"))
+
+    available = _is_clean_group(group) and status == 3 and ready and present
+
+    return {
+        "name": name,
+        "platform": platform,
+        "versions": versions,
+        "available": available,
+        # pomocniczo w debugach
+        "_raw": {"group": group, "status": status, "ready": ready, "present": present},
+    }
+
+def _inventory() -> List[Dict[str, Any]]:
+    if not _enabled():
+        # bez ENV nic nie rób — pusta lista
+        return []
+    raw = fetch_devices_raw()
+    return [_normalize_from_sd(x) for x in raw]
+
+# ---------- Główna funkcja dla FSM ----------
 
 def suggest_devices(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Zwraca słownik:
+    Zwraca:
       - status: "match" | "no_match"
-      - matches: [lista urządzeń spełniających OS i platformę (+ ewentualnie model)], dostępne teraz
-      - alternatives: [lista dostępnych urządzeń w tej platformie, jeśli brak matchy]
-      - reason (opcjonalnie): krótki powód, czemu nie ma dopasowania
+      - matches: urządzenia dostępne (CLEAN + Online + ready + present)
+                 po filtrze platformy/OS/model
+      - alternatives: (tu nie pokazujemy nic spoza CLEAN)
+      - reason: powód braku dopasowań
     """
     platform = (payload.get("platform") or "").strip()
     desired_os = (payload.get("os_version") or "").strip()
     device_model = (payload.get("device_model") or "").strip()
+    need_os = (payload.get("need_os_version") or "").lower() == "yes"
     model_specified = device_model and device_model.upper() != "TBD"
 
-    os_family, os_major = _parse_os_version(desired_os)
+    inv = _inventory()
 
-    inv = fetch_inventory(payload)
+    # 1) tylko dostępne w CLEAN
+    inv_clean_av = [d for d in inv if d.get("available")]
 
-    # 1) Filtrowanie po platformie
-    inv_plat = [d for d in inv if (not platform or d.get("platform") == platform)]
+    # 2) platforma
+    if platform:
+        inv_clean_av = [d for d in inv_clean_av if d["platform"] == platform]
 
-    # 2) Filtrowanie po wersji OS (dokładne dopasowanie stringu w versions)
-    inv_os = inv_plat
-    if desired_os:
-        inv_os = [d for d in inv_plat if desired_os in (d.get("versions") or [])]
+    # 3) OS (jeśli wymagany)
+    if need_os and desired_os:
+        inv_clean_av = [d for d in inv_clean_av if desired_os in (d.get("versions") or [])]
 
-    # 3) Jeżeli użytkownik wskazał konkretny model (device_model != TBD), zawęź
+    # 4) model (substring, jeśli podany)
     if model_specified:
         needle = device_model.lower()
-        inv_os = [d for d in inv_os if needle in (d.get("name") or "").lower()]
+        inv_clean_av = [d for d in inv_clean_av if needle in d["name"].lower()]
 
-    # 4) Dostępne teraz
-    matches_available = [d for d in inv_os if d.get("available")]
+    if inv_clean_av:
+        return {"status": "match", "matches": inv_clean_av[:_limit()], "alternatives": []}
 
-    if matches_available:
-        return {
-            "status": "match",
-            "matches": matches_available[:LIMIT],
-            "alternatives": [],
-        }
-
-    # 5) Jeśli brak matchy → pokaż dostępne alternatywy w tej platformie
-    alternatives = [d for d in inv_plat if d.get("available")]
-    reason = "No exact device with the requested OS version is available right now."
-    if desired_os and not inv_os:
-        reason = f"No device with {desired_os} is available right now."
+    reason = "No CLEAN devices matching your constraints are available right now."
+    if need_os and desired_os:
+        reason = f"No CLEAN device with {desired_os} is available right now."
     elif model_specified:
-        reason = f"No available units of '{device_model}' matching your request."
+        reason = f"No available CLEAN units of '{device_model}'."
 
-    return {
-        "status": "no_match",
-        "matches": [],
-        "alternatives": alternatives[:LIMIT],
-        "reason": reason,
-    }
+    return {"status": "no_match", "matches": [], "alternatives": [], "reason": reason}
